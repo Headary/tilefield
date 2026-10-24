@@ -5,10 +5,11 @@
   const DELTAS = [[0, -1], [1, 0], [0, 1], [-1, 0]];
   const els = Object.fromEntries([
     'tileWidth', 'tileHeight', 'tileFiles', 'sheetFile', 'tilesList', 'tileCount', 'clearTiles',
-    'sheetOptions', 'sheetName', 'sliceWidth', 'sliceHeight', 'slicePreview', 'sheetNameInput', 'sliceSheet', 'edgeMatching', 'ruleTile',
+    'sheetOptions', 'sheetName', 'sliceWidth', 'sliceHeight', 'slicePreview', 'sheetNameInput', 'sliceSheet', 'edgeMatching',
+    'edgeToleranceControls', 'edgeTolerance', 'edgeToleranceValue', 'cornerTolerance', 'cornerToleranceValue', 'ruleTile',
     'ruleDirection', 'toggleAllRules', 'neighborRules', 'gridColumns', 'gridRows', 'allowRotations',
     'selectedTileName', 'rotateLeft', 'rotateRight', 'rotationValue', 'generate', 'clearGrid',
-    'exportPng', 'gridDimensions', 'boardStatus', 'board', 'boardEmpty', 'boardViewport'
+    'exportPng', 'saveConfig', 'loadConfig', 'configFile', 'gridDimensions', 'boardStatus', 'board', 'boardEmpty', 'boardViewport'
   ].map(id => [id, document.getElementById(id)]));
 
   const ctx = els.board.getContext('2d');
@@ -19,6 +20,7 @@
   let sheetImage = null;
   let sheetFileName = '';
   let variants = [];
+  let adjacency = [];
   let lastSolution = null;
   let solved = false;
   let isGenerating = false;
@@ -81,6 +83,15 @@
         reject(new Error(`Could not read image “${file.name}”.`));
       };
       image.src = url;
+    });
+  }
+
+  function loadImageDataUrl(dataUrl) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('A saved tile image could not be decoded.'));
+      image.src = dataUrl;
     });
   }
 
@@ -167,6 +178,7 @@
     const enabledCount = tiles.filter(tile => tile.enabled).length;
     els.tileCount.textContent = `${enabledCount} of ${tiles.length} used`;
     els.clearTiles.disabled = tiles.length === 0;
+    els.saveConfig.disabled = tiles.length === 0;
     els.generate.disabled = enabledCount === 0 || isGenerating;
   }
 
@@ -223,6 +235,9 @@
     els.clearGrid.disabled = pins.size === 0;
     els.gridDimensions.textContent = `${gridSize().columns} × ${gridSize().rows} grid`;
     els.boardEmpty.hidden = tiles.length > 0 && (solved || pins.size > 0);
+    els.edgeToleranceControls.hidden = !els.edgeMatching.checked;
+    els.edgeToleranceValue.value = `${els.edgeTolerance.value}%`;
+    els.cornerToleranceValue.value = `${els.cornerTolerance.value}%`;
   }
 
   function getOrientedCanvas(tile, rotation) {
@@ -256,6 +271,11 @@
         });
       }
     }
+    adjacency = Array.from({ length: 4 }, (_, direction) =>
+      variants.map(first => new Set(
+        variants.flatMap((second, index) => compatible(first, second, direction) ? [index] : [])
+      ))
+    );
   }
 
   function getEdges(canvas) {
@@ -275,7 +295,12 @@
 
   function pixelAt(data, width, x, y) {
     const index = (y * width + x) * 4;
-    return `${data[index]},${data[index + 1]},${data[index + 2]},${data[index + 3]}`;
+    return [data[index], data[index + 1], data[index + 2], data[index + 3]];
+  }
+
+  function pixelsMatch(first, second, tolerancePercent) {
+    const maximumDifference = 255 * tolerancePercent / 100;
+    return first.every((channel, index) => Math.abs(channel - second[index]) <= maximumDifference);
   }
 
   function edgesMatch(first, second, direction) {
@@ -283,7 +308,13 @@
     const edgeA = first.edges[direction];
     const edgeB = second.edges[opposite];
     if (edgeA.length !== edgeB.length) return false;
-    return edgeA.every((pixel, index) => pixel === edgeB[index]);
+    const lastIndex = edgeA.length - 1;
+    return edgeA.every((pixel, index) => {
+      const tolerance = index === 0 || index === lastIndex
+        ? Number(els.cornerTolerance.value)
+        : Number(els.edgeTolerance.value);
+      return pixelsMatch(pixel, edgeB[index], tolerance);
+    });
   }
 
   function manuallyCompatible(first, second, direction) {
@@ -373,30 +404,39 @@
   }
 
   function propagate(domains, startingCells, columns, rows) {
-    const queue = [...startingCells];
+    const queue = [];
+    for (const cell of startingCells) {
+      for (const { cell: neighbor, direction } of neighborsOf(cell, columns, rows)) {
+        queue.push({ source: cell, target: neighbor, direction });
+      }
+    }
     let cursor = 0;
     while (cursor < queue.length) {
-      const cell = queue[cursor++];
-      const sourceDomain = domains[cell];
-      if (sourceDomain.size === 0) return false;
-      for (const { cell: neighbor, direction } of neighborsOf(cell, columns, rows)) {
-        const neighborDomain = domains[neighbor];
-        let changed = false;
-        for (const candidate of neighborDomain) {
-          let supported = false;
-          for (const sourceIndex of sourceDomain) {
-            if (compatible(variants[sourceIndex], variants[candidate], direction)) {
-              supported = true;
-              break;
-            }
-          }
-          if (!supported) {
-            neighborDomain.delete(candidate);
-            changed = true;
+      const { source, target, direction } = queue[cursor++];
+      const sourceDomain = domains[source];
+      const targetDomain = domains[target];
+      let changed = false;
+      for (const candidate of targetDomain) {
+        let supported = false;
+        const supports = adjacency[direction];
+        for (const sourceIndex of sourceDomain) {
+          if (supports[sourceIndex].has(candidate)) {
+            supported = true;
+            break;
           }
         }
-        if (neighborDomain.size === 0) return false;
-        if (changed) queue.push(neighbor);
+        if (!supported) {
+          targetDomain.delete(candidate);
+          changed = true;
+        }
+      }
+      if (targetDomain.size === 0) return false;
+      if (changed) {
+        for (const { cell: neighbor, direction: nextDirection } of neighborsOf(target, columns, rows)) {
+          if (neighbor !== source) {
+            queue.push({ source: target, target: neighbor, direction: nextDirection });
+          }
+        }
       }
     }
     return true;
@@ -417,32 +457,93 @@
     return domains;
   }
 
-  function solveAttempt(columns, rows) {
+  function cloneDomains(domains) {
+    return domains.map(domain => new Set(domain));
+  }
+
+  function orderCandidates(cell, domains, columns, rows) {
+    const scored = [...domains[cell]].map(candidate => {
+      let eliminated = 0;
+      for (const { cell: neighbor, direction } of neighborsOf(cell, columns, rows)) {
+        const allowed = adjacency[direction][candidate];
+        for (const neighborCandidate of domains[neighbor]) {
+          if (!allowed.has(neighborCandidate)) eliminated++;
+        }
+      }
+      return { candidate, eliminated, tie: Math.random() };
+    });
+    scored.sort((first, second) =>
+      first.eliminated - second.eliminated || first.tie - second.tie
+    );
+    return scored.map(item => item.candidate);
+  }
+
+  function nextBranch(frame, columns, rows) {
+    while (frame.nextCandidate < frame.candidates.length) {
+      const candidate = frame.candidates[frame.nextCandidate++];
+      const branch = cloneDomains(frame.domains);
+      branch[frame.cell] = new Set([candidate]);
+      if (propagate(branch, [frame.cell], columns, rows)) return branch;
+    }
+    return null;
+  }
+
+  async function solveAttempt(columns, rows) {
     const cellCount = columns * rows;
     const domains = makeInitialDomains(cellCount, columns, rows);
     if (!domains) return null;
 
+    const stack = [];
+    let currentDomains = domains;
+    let decisions = 0;
     while (true) {
       let minSize = Infinity;
       let choices = [];
       for (let cell = 0; cell < cellCount; cell++) {
-        const size = domains[cell].size;
-        if (size > 1 && size < minSize) {
+        const size = currentDomains[cell].size;
+        if (size <= 1) continue;
+        const degree = neighborsOf(cell, columns, rows)
+          .filter(({ cell: neighbor }) => currentDomains[neighbor].size > 1).length;
+        if (size < minSize) {
           minSize = size;
-          choices = [cell];
-        } else if (size > 1 && size === minSize) {
-          choices.push(cell);
+          choices = [{ cell, degree }];
+        } else if (size === minSize) {
+          choices.push({ cell, degree });
         }
       }
-      if (choices.length === 0) return domains.map(domain => domain.values().next().value);
-      const cell = choices[Math.floor(Math.random() * choices.length)];
-      const candidates = [...domains[cell]];
-      domains[cell] = new Set([candidates[Math.floor(Math.random() * candidates.length)]]);
-      if (!propagate(domains, [cell], columns, rows)) return null;
+      if (choices.length === 0) {
+        return currentDomains.every(domain => domain.size === 1)
+          ? currentDomains.map(domain => domain.values().next().value)
+          : null;
+      }
+
+      const maxDegree = Math.max(...choices.map(choice => choice.degree));
+      const mostConstrained = choices.filter(choice => choice.degree === maxDegree);
+      const cell = mostConstrained[Math.floor(Math.random() * mostConstrained.length)].cell;
+      const frame = {
+        cell,
+        domains: cloneDomains(currentDomains),
+        candidates: orderCandidates(cell, currentDomains, columns, rows),
+        nextCandidate: 0
+      };
+      stack.push(frame);
+      currentDomains = nextBranch(frame, columns, rows);
+
+      while (!currentDomains) {
+        stack.pop();
+        if (stack.length === 0) return null;
+        currentDomains = nextBranch(stack[stack.length - 1], columns, rows);
+      }
+
+      decisions++;
+      if (decisions % 100 === 0) {
+        showStatus(`Searching for a consistent pattern… (${decisions} choices)`);
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
     }
   }
 
-  function generate() {
+  async function generate() {
     if (tiles.length === 0 || isGenerating) return;
     isGenerating = true;
     renderTiles();
@@ -450,12 +551,7 @@
     buildVariants();
 
     const { columns, rows } = gridSize();
-    const maxAttempts = 40;
-    let solution = null;
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      solution = solveAttempt(columns, rows);
-      if (solution) break;
-    }
+    const solution = await solveAttempt(columns, rows);
 
     isGenerating = false;
     renderTiles();
@@ -497,15 +593,15 @@
     const height = numberValue(els.sliceHeight, 32, 1, 256);
     els.sliceWidth.value = String(width);
     els.sliceHeight.value = String(height);
-    els.tileWidth.value = String(width);
-    els.tileHeight.value = String(height);
-    resizeTiles(width, height);
     const cols = Math.floor(sheetImage.naturalWidth / width);
     const rows = Math.floor(sheetImage.naturalHeight / height);
     if (cols < 1 || rows < 1) {
       showStatus('Tile dimensions are larger than the spritesheet', true);
       return;
     }
+    els.tileWidth.value = String(width);
+    els.tileHeight.value = String(height);
+    resizeTiles(width, height);
     const prefix = els.sheetNameInput.value.trim() || 'sheet';
     const added = [];
     for (let y = 0; y < rows; y++) {
@@ -551,6 +647,154 @@
     renderAll();
   }
 
+  function saveConfiguration() {
+    try {
+      const config = {
+        format: 'tilefield-config',
+        version: 1,
+        tileSize: cellSize(),
+        grid: gridSize(),
+        options: {
+          edgeMatching: els.edgeMatching.checked,
+          edgeTolerance: Number(els.edgeTolerance.value),
+          cornerTolerance: Number(els.cornerTolerance.value),
+          allowRotations: els.allowRotations.checked
+        },
+        selectedTileId,
+        selectedRotation,
+        tiles: tiles.map(tile => ({
+          id: tile.id,
+          name: tile.name,
+          enabled: tile.enabled,
+          image: tile.canvas.toDataURL('image/png'),
+          rules: tile.rules.map(rule => [...rule])
+        })),
+        pins: [...pins].map(([cell, pin]) => ({ cell, ...pin }))
+      };
+      const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'tilefield-config.json';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      showStatus('Configuration saved');
+    } catch (error) {
+      showStatus(`Could not save configuration: ${error.message}`, true);
+    }
+  }
+
+  function validateConfiguration(config) {
+    const isIntegerInRange = (value, min, max) => Number.isInteger(value) && value >= min && value <= max;
+    if (!config || config.format !== 'tilefield-config' || config.version !== 1) {
+      throw new Error('This is not a supported Tilefield configuration.');
+    }
+    if (!config.tileSize || !isIntegerInRange(config.tileSize.width, 1, 256) ||
+      !isIntegerInRange(config.tileSize.height, 1, 256)) {
+      throw new Error('The configuration has invalid tile dimensions.');
+    }
+    if (!config.grid || !isIntegerInRange(config.grid.columns, 1, 60) ||
+      !isIntegerInRange(config.grid.rows, 1, 60)) {
+      throw new Error('The configuration has invalid grid dimensions.');
+    }
+    if (!config.options || typeof config.options.edgeMatching !== 'boolean' ||
+      typeof config.options.allowRotations !== 'boolean' || !Array.isArray(config.tiles) ||
+      config.tiles.length === 0 || !Array.isArray(config.pins)) {
+      throw new Error('The configuration is missing required settings or tiles.');
+    }
+    for (const tolerance of ['edgeTolerance', 'cornerTolerance']) {
+      if (config.options[tolerance] !== undefined &&
+        (!Number.isInteger(config.options[tolerance]) || config.options[tolerance] < 0 || config.options[tolerance] > 100)) {
+        throw new Error(`The configuration has an invalid ${tolerance}.`);
+      }
+    }
+
+    const ids = new Set();
+    for (const tile of config.tiles) {
+      if (!tile || typeof tile.id !== 'string' || tile.id.length === 0 || ids.has(tile.id) ||
+        typeof tile.name !== 'string' || typeof tile.enabled !== 'boolean' ||
+        typeof tile.image !== 'string' || !/^data:image\/[^;,]+;base64,/i.test(tile.image) ||
+        !Array.isArray(tile.rules) || tile.rules.length !== 4 ||
+        tile.rules.some(rule => !Array.isArray(rule) || rule.some(id => typeof id !== 'string'))) {
+        throw new Error('The configuration contains an invalid tile.');
+      }
+      ids.add(tile.id);
+    }
+    for (const tile of config.tiles) {
+      for (const rule of tile.rules) {
+        if (rule.some(id => !ids.has(id))) throw new Error('A tile rule references a missing tile.');
+      }
+    }
+    const enabledIds = new Set(config.tiles.filter(tile => tile.enabled).map(tile => tile.id));
+    const maxCell = config.grid.columns * config.grid.rows;
+    const pinnedCells = new Set();
+    for (const pin of config.pins) {
+      if (!pin || !isIntegerInRange(pin.cell, 0, maxCell - 1) || pinnedCells.has(pin.cell) ||
+        !enabledIds.has(pin.tileId) || ![0, 90, 180, 270].includes(pin.rotation) ||
+        (!config.options.allowRotations && pin.rotation !== 0)) {
+        throw new Error('The configuration contains an invalid pinned tile.');
+      }
+      pinnedCells.add(pin.cell);
+    }
+    if (config.selectedTileId !== null && !enabledIds.has(config.selectedTileId)) {
+      throw new Error('The selected tile is missing or excluded in the configuration.');
+    }
+    if (![0, 90, 180, 270].includes(config.selectedRotation) ||
+      (!config.options.allowRotations && config.selectedRotation !== 0)) {
+      throw new Error('The configuration has an invalid tile rotation.');
+    }
+  }
+
+  async function loadConfiguration(file) {
+    try {
+      const config = JSON.parse(await file.text());
+      validateConfiguration(config);
+      if (tiles.length > 0 && !window.confirm('Loading a configuration replaces the current tiles and settings. Continue?')) {
+        return;
+      }
+
+      const stagedTiles = await Promise.all(config.tiles.map(async savedTile => {
+        const image = await loadImageDataUrl(savedTile.image);
+        const canvas = createCanvas(config.tileSize.width, config.tileSize.height);
+        const tileCtx = canvas.getContext('2d');
+        tileCtx.imageSmoothingEnabled = false;
+        tileCtx.drawImage(image, 0, 0, canvas.width, canvas.height);
+        return {
+          id: savedTile.id,
+          name: savedTile.name,
+          enabled: savedTile.enabled,
+          canvas,
+          rules: savedTile.rules.map(rule => new Set(rule))
+        };
+      }));
+
+      tiles.splice(0, tiles.length, ...stagedTiles);
+      pins.clear();
+      for (const pin of config.pins) {
+        pins.set(pin.cell, { tileId: pin.tileId, rotation: pin.rotation });
+      }
+      els.tileWidth.value = String(config.tileSize.width);
+      els.tileHeight.value = String(config.tileSize.height);
+      els.sliceWidth.value = String(config.tileSize.width);
+      els.sliceHeight.value = String(config.tileSize.height);
+      els.gridColumns.value = String(config.grid.columns);
+      els.gridRows.value = String(config.grid.rows);
+      previousGridSize = { ...config.grid };
+      els.edgeMatching.checked = config.options.edgeMatching;
+      els.edgeTolerance.value = String(config.options.edgeTolerance ?? 0);
+      els.cornerTolerance.value = String(config.options.cornerTolerance ?? 0);
+      els.allowRotations.checked = config.options.allowRotations;
+      selectedTileId = config.selectedTileId;
+      selectedRotation = config.selectedRotation;
+      sheetImage = null;
+      els.sheetOptions.hidden = true;
+      invalidatePattern('Configuration loaded — generate to rebuild the pattern');
+      renderAll();
+    } catch (error) {
+      showStatus(`Could not load configuration: ${error.message}`, true);
+    }
+  }
+
   els.tileFiles.addEventListener('change', async event => {
     await addImageFiles(event.target.files);
     event.target.value = '';
@@ -579,6 +823,13 @@
     input.addEventListener('change', updateSlicePreview);
   }
   els.clearTiles.addEventListener('click', resetTiles);
+  els.saveConfig.addEventListener('click', saveConfiguration);
+  els.loadConfig.addEventListener('click', () => els.configFile.click());
+  els.configFile.addEventListener('change', async event => {
+    const file = event.target.files[0];
+    if (file) await loadConfiguration(file);
+    event.target.value = '';
+  });
   els.ruleTile.addEventListener('change', renderNeighborRules);
   els.ruleDirection.addEventListener('change', renderNeighborRules);
   els.toggleAllRules.addEventListener('click', () => {
@@ -591,7 +842,19 @@
     renderNeighborRules();
     invalidatePattern('Rules changed — generate again');
   });
-  els.edgeMatching.addEventListener('change', () => invalidatePattern('Rules changed — generate again'));
+  els.edgeMatching.addEventListener('change', () => {
+    els.edgeToleranceControls.hidden = !els.edgeMatching.checked;
+    invalidatePattern('Rules changed — generate again');
+  });
+  for (const [input, output] of [
+    [els.edgeTolerance, els.edgeToleranceValue],
+    [els.cornerTolerance, els.cornerToleranceValue]
+  ]) {
+    input.addEventListener('input', () => {
+      output.value = `${input.value}%`;
+      invalidatePattern('Edge tolerance changed — generate again');
+    });
+  }
   els.allowRotations.addEventListener('change', () => {
     selectedRotation = 0;
     if (!els.allowRotations.checked) {

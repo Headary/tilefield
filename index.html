@@ -13,6 +13,11 @@
       <a class="wordmark" href="#" aria-label="Tilefield home"><span class="brand-mark">▦</span> tilefield</a>
       <p class="top-note">A little order from a little chaos.</p>
       <span class="local-badge"><span></span> Runs in your browser</span>
+      <div class="config-actions">
+        <button id="saveConfig" class="config-button" type="button" disabled>↓ Save config</button>
+        <button id="loadConfig" class="config-button" type="button">↑ Load config</button>
+        <input id="configFile" type="file" accept=".json,application/json" hidden>
+      </div>
     </header>
 
     <section class="intro">
@@ -81,6 +86,18 @@
             <input id="edgeMatching" type="checkbox">
             <span class="toggle" aria-hidden="true"></span>
           </label>
+          <div id="edgeToleranceControls" class="tolerance-controls" hidden>
+            <label class="tolerance-field" for="edgeTolerance">
+              <span><strong>Edge tolerance</strong><output id="edgeToleranceValue" for="edgeTolerance">0%</output></span>
+              <input id="edgeTolerance" type="range" min="0" max="100" step="1" value="0">
+              <small>Maximum color-channel difference per edge pixel</small>
+            </label>
+            <label class="tolerance-field" for="cornerTolerance">
+              <span><strong>Corner tolerance</strong><output id="cornerToleranceValue" for="cornerTolerance">0%</output></span>
+              <input id="cornerTolerance" type="range" min="0" max="100" step="1" value="0">
+              <small>Maximum color-channel difference at edge corners</small>
+            </label>
+          </div>
           <div id="ruleEditor" class="rule-editor">
             <div class="rule-selectors">
               <label for="ruleTile">Tile</label>
