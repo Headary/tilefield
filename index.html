@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f3f1eb">
+  <title>Tilefield — WFC Tile Generator</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <a class="wordmark" href="#" aria-label="Tilefield home"><span class="brand-mark">▦</span> tilefield</a>
+      <p class="top-note">A little order from a little chaos.</p>
+      <span class="local-badge"><span></span> Runs in your browser</span>
+    </header>
+
+    <section class="intro">
+      <div>
+        <p class="eyebrow">WAVE FUNCTION COLLAPSE / TILE STUDIO</p>
+        <h1>Build a world,<br><span>one tile at a time.</span></h1>
+      </div>
+      <p class="intro-copy">Choose your pieces, set the rules, pin a few details, and let the pattern find its way.</p>
+    </section>
+
+    <div class="workspace">
+      <aside class="control-panel">
+        <section class="panel-section">
+          <div class="section-heading">
+            <span class="step-number">01</span>
+            <div><h2>Your tiles</h2><p>Bring in a tileset or add images.</p></div>
+          </div>
+          <div class="tile-dimensions">
+            <label>Tile size <span class="dimension-fields">
+              <input id="tileWidth" type="number" min="1" max="256" value="32" aria-label="Tile width in pixels">
+              <span>×</span>
+              <input id="tileHeight" type="number" min="1" max="256" value="32" aria-label="Tile height in pixels">
+              <span>px</span>
+            </span></label>
+          </div>
+          <div class="upload-row">
+            <label class="upload-button" for="tileFiles"><span>＋</span> Add images</label>
+            <input id="tileFiles" type="file" accept="image/*" multiple hidden>
+            <label class="upload-button secondary" for="sheetFile"><span>▤</span> Add spritesheet</label>
+            <input id="sheetFile" type="file" accept="image/*" hidden>
+          </div>
+          <div id="tilesList" class="tiles-list empty-list">
+            <div class="empty-tiles"><span>▧</span><p>Your tile tray is empty.<br>Add some image tiles to begin.</p></div>
+          </div>
+          <div class="tile-tray-footer">
+            <span id="tileCount">0 tiles</span>
+            <button id="clearTiles" class="text-button" type="button" disabled>Clear all</button>
+          </div>
+        </section>
+
+        <section id="sheetOptions" class="panel-section sheet-options" hidden>
+          <div class="section-heading compact">
+            <span class="step-number">↳</span>
+            <div><h2>Slice spritesheet</h2><p id="sheetName">Selected image</p></div>
+          </div>
+          <div class="slice-size-fields">
+            <label for="sliceWidth">Slice size</label>
+            <input id="sliceWidth" type="number" min="1" max="256" value="32" aria-label="Sprite slice width in pixels">
+            <span>×</span>
+            <input id="sliceHeight" type="number" min="1" max="256" value="32" aria-label="Sprite slice height in pixels">
+            <span>px</span>
+          </div>
+          <p id="slicePreview" class="slice-preview">Enter tile dimensions to preview the slice count.</p>
+          <label class="field-label" for="sheetNameInput">Name prefix</label>
+          <input id="sheetNameInput" class="text-input" type="text" value="sheet">
+          <button id="sliceSheet" class="small-action" type="button">Slice into tiles <span>↗</span></button>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-heading">
+            <span class="step-number">02</span>
+            <div><h2>Connection rules</h2><p>Tell the tiles how to get along.</p></div>
+          </div>
+          <label class="toggle-row">
+            <span><strong>Match edge pixels</strong><small>Only connect identical edges</small></span>
+            <input id="edgeMatching" type="checkbox">
+            <span class="toggle" aria-hidden="true"></span>
+          </label>
+          <div id="ruleEditor" class="rule-editor">
+            <div class="rule-selectors">
+              <label for="ruleTile">Tile</label>
+              <select id="ruleTile" disabled><option value="">Add tiles first</option></select>
+              <label for="ruleDirection">Side</label>
+              <select id="ruleDirection" disabled>
+                <option value="0">North ↑</option>
+                <option value="1">East →</option>
+                <option value="2">South ↓</option>
+                <option value="3">West ←</option>
+              </select>
+            </div>
+            <div class="rules-label"><span>May connect to</span><button id="toggleAllRules" type="button" class="text-button" disabled>None</button></div>
+            <div id="neighborRules" class="neighbor-rules"><p class="muted">Add tiles to edit connections.</p></div>
+          </div>
+          <p class="rule-hint">Rules are directional. A connection must also be allowed from the neighboring tile's side.</p>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-heading">
+            <span class="step-number">03</span>
+            <div><h2>Shape your grid</h2><p>Set the size, then place any anchors.</p></div>
+          </div>
+          <div class="grid-size-fields">
+            <label>Columns<input id="gridColumns" type="number" min="1" max="60" value="12"></label>
+            <span class="times">×</span>
+            <label>Rows<input id="gridRows" type="number" min="1" max="60" value="10"></label>
+          </div>
+          <label class="toggle-row rotation-toggle">
+            <span><strong>Allow rotations</strong><small>Use 90° tile turns</small></span>
+            <input id="allowRotations" type="checkbox">
+            <span class="toggle" aria-hidden="true"></span>
+          </label>
+          <div id="placementControls" class="placement-controls">
+            <div class="selected-tile-label"><span>Selected tile</span><strong id="selectedTileName">None</strong></div>
+            <div class="rotation-buttons">
+              <button id="rotateLeft" type="button" aria-label="Rotate selected tile counterclockwise" title="Rotate counterclockwise" disabled>↶</button>
+              <span id="rotationValue">0°</span>
+              <button id="rotateRight" type="button" aria-label="Rotate selected tile clockwise" title="Rotate clockwise" disabled>↷</button>
+              <span class="placement-tip">Click a tile, then a cell to pin it.</span>
+            </div>
+          </div>
+          <button id="generate" class="primary-button" type="button" disabled><span>✳</span> Generate pattern</button>
+        </section>
+      </aside>
+
+      <section class="board-panel">
+        <div class="board-toolbar">
+          <div>
+            <p class="eyebrow">YOUR CANVAS</p>
+            <h2>Pattern playground</h2>
+          </div>
+          <div class="board-actions">
+            <button id="clearGrid" class="toolbar-button" type="button" disabled>Clear pins</button>
+            <button id="exportPng" class="toolbar-button export-button" type="button" disabled><span>↓</span> Export PNG</button>
+          </div>
+        </div>
+        <div class="board-meta">
+          <span id="gridDimensions">12 × 10 grid</span>
+          <span class="meta-separator">·</span>
+          <span id="boardStatus">Ready when you are</span>
+        </div>
+        <div id="boardViewport" class="board-viewport">
+          <canvas id="board" aria-label="Generated tile grid. Click cells to place selected tiles, right-click to clear."></canvas>
+          <div id="boardEmpty" class="board-empty">
+            <div class="empty-art" aria-hidden="true"><span>◇</span><span>▦</span><span>△</span><span>○</span></div>
+            <h3>A blank little universe</h3>
+            <p>Add tiles, then generate a pattern.<br>Or choose a tile and click anywhere to pin it.</p>
+          </div>
+        </div>
+        <div class="board-footer">
+          <span><i class="pin-dot"></i> Pinned tiles stay in place</span>
+          <span>Right-click a cell to clear it</span>
+        </div>
+      </section>
+    </div>
+    <footer class="page-footer"><span>Tilefield</span><span>Made for happy accidents ✳</span></footer>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
